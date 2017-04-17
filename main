@@ -1,28 +1,31 @@
-testtest
-
-
 #include <Wire.h>
 #include <SPI.h>
 #include <SD.h>
 #include <math.h>
-#define AD5933ADDR 0x0D  //address
-#define CNTRLREGISTER 0x80  //control register MSBs
+#include <Time.h>
+#include <TimeLib.h>
+
+//global vars
+const int dtime = 10;  //delay between I2C operations, in usecs
+const int CS = 10;  //pin select for CS
+const int heat_time = 10000;  //time heater is on in msecs
+const float pi = 3.14159265;
+const int AD5933ADDR = 0x0D;
+const int CNTRLREGISTER = 0x80;  //something messed up here check data sheet
+
+const int D0 = A0;
+const int D1 = A1;
+
+const int HES = A7;
+const int heater = A8;
+const int nuccore = A9;
+
+int myregister = 0;
+int myregisterval = 0;
 
 void setup() {
   Wire.begin();
   Serial.begin(9600);
-
-  //some global vars?
-  const int dtime = 10;  //delay between I2C operations
-  const int CS = 10;  //pin select for CS
-  const float pi = 3.14159265;
-
-  const int D0 = A0;
-  const int D1 = A1;
-
-  int myregister = 0;
-  int myregisterval = 0;
-
 
   //initialize SD card and make a file
   if (!SD.begin(CS)) {
@@ -38,11 +41,24 @@ void setup() {
   writeSD(String(hour()) + ":" + String(minute()) + ":" + String(second()));
   writeSD(String(day()) + "/" + String(month()) + "/" + String(year()));
   writeSD("");
+}
 
+void loop() {
+
+  main1();
+
+  delay(300000);  //probably better to use something else other than delay
 }
 
 
-void main() {
+void main1() {
+
+  pinMode(heater, OUTPUT);
+  pinMode(nuccore, OUTPUT);
+  pinMode(HES, INPUT);
+
+  //talk to mux
+
 
   pinMode(D0, OUTPUT);  //corresponds to logic A
   pinMode(D1, OUTPUT);  //logic B
@@ -52,26 +68,99 @@ void main() {
   digitalWrite(D0, LOW);
   digitalWrite(D1, LOW);
 
-  do stuff
+  flow();
 
   //flow2
 
   digitalWrite(D0, HIGH);
   digitalWrite(D1, LOW);
 
+  flow();
+
   //pressure
 
   digitalWrite(D0, LOW);
   digitalWrite(D1, HIGH);
 
+  writeSD("Pressure Works");
+
   //patency
 
   digitalWrite(D0, HIGH);
-  digitalWrite(D1, HIGH;
+  digitalWrite(D1, HIGH);
 
+  writeSD("Patency Works");
 
+  //inhibit mux
+  //digitalWrite(INH, HIGH);
+  
 }
 
+void flow() {
+
+  const int averaging_factor = 1000; //msecs over which to sample hall effect sensor
+  double HES_val;  //hall effect sensor reading
+
+  digitalWrite(heater, HIGH);  //turn on heater
+
+  int i = 0;
+  unsigned long start_time = millis();
+  unsigned long time_now = start_time;
+  unsigned long HES_times[5];  //do i need to initialize these?
+  double HES_valm[5];
+  
+  while (millis() - start_time < heat_time) {
+
+    delay(50);
+
+    HES_times[i] = millis() - start_time;
+
+
+    for (int j = 0; j < averaging_factor; j++) { //copying Alex
+      HES_val += digitalRead(HES);
+    };
+
+    HES_val = HES_val / averaging_factor; //may need to be double
+    HES_valm[i] = HES_val;  //why am i writing it like this, how to declare matrix/array
+    i++;
+
+
+
+    if ((millis() - time_now) >= 1000) {  //perform 1 freq sweep each second
+      freqsweepfunction();
+      time_now = millis();
+    }
+  }
+
+  digitalWrite(heater, LOW);  //turn off heater
+
+  //write to SD - copy from Alex
+  String output = "";
+  for (int j = 0; j<i; j++) {
+    output = String(HES_times[j]) + " " + String(HES_valm[j]);
+    writeSD(output);
+    j++;
+  }
+}
+
+
+void writeSD(String writeString) {
+  SD.begin(CS);
+  File datafile = SD.open("log1.txt", FILE_WRITE);
+
+  if (datafile) {
+    datafile.println(writeString);
+    datafile.close();
+  }
+}
+
+void wirewriteloop(myregister = 0, myregisterval = 0) {
+  Wire.beginTransmission(AD5933ADDR);
+  Wire.write(byte(myregister));
+  Wire.write(byte(myregisterval));
+  Wire.endTransmission();
+  delayMicroseconds(dtime);
+}
 
 
 void freqsweepfunction() {
@@ -85,26 +174,27 @@ void freqsweepfunction() {
 
   float imp_mag = 0;
   double imp_phase = 0;
-  float gain_factor = 123.456  //this could be calculated w/ auto calibration step
+  float gain_factor = .0000123456;  //this could be calculated w/ auto calibration step
 
-    //activation protocol for AD5933
+                      //activation protocol for AD5933
 
-  //enter standby mode
-  //  Wire.beginTransmission(AD5933ADDR);
-  //  Wire.write(CNTRLREGISTER); //control register MSBs
-  //  Wire.write(0xB0); //standby mode: 10110000 (bin)
-  //  Wire.endTransmission();
-  //  delayMicroseconds(dtime);
+                      //enter standby mode
+                      //  Wire.beginTransmission(AD5933ADDR);
+                      //  Wire.write(CNTRLREGISTER); //control register MSBs
+                      //  Wire.write(0xB0); //standby mode: 10110000 (bin)
+                      //  Wire.endTransmission();
+                      //  delayMicroseconds(dtime);
 
-  //assign start frequency registry
-  wirewriteloop(0x82, 0x00); //start freq: 1kHz = 33554 (dec) = 0x008312 (hex)
+                      //assign start frequency registry
+
+                      wirewriteloop(0x82, 0x00); //start freq: 1kHz = 33554 (dec) = 0x008312 (hex)
 
   wirewriteloop(0x83, 0x83);
 
   wirewriteloop(0x84, 0x12);
 
   //number of increments register
-  wirewriteloop(0x89, 0x14);
+  wirewriteloop(0x89, 0x14); //20 (dec)
 
   //frequency increment register
   wirewriteloop(0x85, 0x05);  //freq increments: 10 kHz = 335544 (dec) = 0x051EB8 (hex)
@@ -124,7 +214,7 @@ void freqsweepfunction() {
   //control: initialize with start frequency
   wirewriteloop(CNTRLREGISTER, 0x10);  //init w start freq: 0001 0000
 
-  delay(10000);  //settling time
+  delay(1000);  //settling time
 
 
 
@@ -170,7 +260,7 @@ void freqsweepfunction() {
         Wire.write(byte(0x95));  //point to real data LSB
         Wire.endTransmission();
 
-        Wire.requestFrom(ADR5933ADDR, 1);
+        Wire.requestFrom(AD5933ADDR, 1);
 
         if (Wire.available()) {
           real_read |= Wire.read();
@@ -193,7 +283,7 @@ void freqsweepfunction() {
         Wire.write(byte(0x97));  //point to imag data LSB
         Wire.endTransmission();
 
-        Wire.requestFrom(ADR5933ADDR, 1);
+        Wire.requestFrom(AD5933ADDR, 1);
 
         if (Wire.available()) {
           imag_read |= Wire.read();
@@ -229,7 +319,7 @@ void freqsweepfunction() {
 
         i = 0;  //measurement number index
         output = "";
-        output = String(i) + " " + String(imp + mag) + " " + String(imp_phase);
+        output = String(i) + " " + String(imp_mag) + " " + String(imp_phase);
         writeSD(output);
         i++;
 
@@ -245,7 +335,7 @@ void freqsweepfunction() {
     Wire.write(byte(0x8F));  //point at status register
     Wire.endTransmission();
 
-    Wire.requestFrom(ADR5933ADDR, 1);
+    Wire.requestFrom(AD5933ADDR, 1);
 
     if (Wire.available()) {
       freq_status = Wire.read();
@@ -255,13 +345,8 @@ void freqsweepfunction() {
 }
 
 
-void wirewriteloop(myregister, myregisterval) {
-  Wire.beginTransmission(AD5933ADDR);
-  Wire.write(byte(myregister));
-  Wire.write(byte(myregisterval));
-  Wire.endTransmission();
-  delayMicroseconds(dtime);
-}
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 
 
 
