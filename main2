@@ -1,0 +1,421 @@
+// 5/22
+
+#include <Wire.h>
+#include <SD.h>
+#include <SPI.h>
+#include <math.h>
+#include <Time.h>
+#include <TimeLib.h>
+
+//global vars
+const int dtime = 10;  //delay between I2C operations, in usecs
+const int CS = 4;  //pin select for CS
+const float pi = 3.14159265;
+const int AD5933ADDR = 0x0D;
+const int CNTRLREGISTER = 0x80;
+
+const int D0 = A0;
+const int D1 = A1;
+
+const int HES = A7;
+const int heater = A8;
+const int nuccore = A9;
+
+int myregister = 0;
+int myregisterval = 0;
+
+int measurement_index = 0;  //tracks number of ad5933 calls
+
+void writeSD(String writeString) {
+  SD.begin(CS);
+  File datafile = SD.open("log1.txt", FILE_WRITE);
+
+  if (datafile) {
+    datafile.println(writeString);
+    datafile.close();
+  }
+}
+
+void wirewriteloop(int myregister = 0, int myregisterval = 0) {
+  Wire.beginTransmission(AD5933ADDR);
+  Wire.write(byte(myregister));
+  Wire.write(byte(myregisterval));
+  Wire.endTransmission();
+  delayMicroseconds(dtime);
+}
+
+void callbackhandler() {
+  setSyncProvider(getTeensy3Time);
+}
+
+time_t getTeensy3Time() {
+  return Teensy3Clock.get();
+}
+
+void setup() {
+  pinMode(9, OUTPUT);
+  digitalWrite(9, LOW);    // begin reset the WIZ820io
+  pinMode(10, OUTPUT);
+  digitalWrite(10, HIGH);  // de-select WIZ820io
+  pinMode(4, OUTPUT);
+  digitalWrite(4, HIGH);   // de-select the SD Card
+  digitalWrite(9, HIGH);   // end reset pulse
+
+  Wire.begin();
+  Serial.begin(9600);
+
+  setSyncProvider(getTeensy3Time);
+
+
+  //initialize SD card and make a file
+  if (!SD.begin(CS)) {
+    Serial.println("Card failed to read");
+    return;
+  }
+
+  Serial.println("Card initialized");
+
+  writeSD("BioFLEX Firmware v9.0");
+  writeSD("AD5933 Interface Software for BioFLEX");
+  writeSD("TH - Biomedical Microsystems Lab (Meng Lab)");
+  writeSD(String(hour()) + ":" + String(minute()) + ":" + String(second()));
+  writeSD(String(day()) + "/" + String(month()) + "/" + String(year()));
+  writeSD("");
+
+  delay(1000);  //just in case
+}
+
+void loop() {
+
+  main1();
+
+  delay(3000000);  //probably better to use something else other than delay
+}
+
+
+void main1() {
+
+  pinMode(heater, OUTPUT);
+  pinMode(nuccore, OUTPUT);
+  pinMode(HES, INPUT);
+
+  //talk to mux
+
+
+  pinMode(D0, OUTPUT);  //corresponds to mux logic A
+  pinMode(D1, OUTPUT);  //logic B
+
+  //flow1
+
+  digitalWrite(D0, LOW);
+  digitalWrite(D1, LOW);
+
+  flow();
+
+  //flow2
+
+  digitalWrite(D0, HIGH);
+  digitalWrite(D1, LOW);
+
+  //flow();
+
+  //pressure
+
+  digitalWrite(D0, LOW);
+  digitalWrite(D1, HIGH);
+
+  Serial.println("Pressure Works");
+
+  //patency
+
+  digitalWrite(D0, HIGH);
+  digitalWrite(D1, HIGH);
+
+  Serial.println("Patency Works");
+
+  //inhibit mux
+  //digitalWrite(INH, HIGH);
+
+}
+
+void flow() {
+
+  const int averaging_factor = 10.0; //cycles over which to sample hall effect sensor
+  const int heat_time = 2000;  //time heater is on in msecs
+  const int sense_resolution = 1000; // msecs between ad5933 calls
+  const int preal_matrices = 0.0173 * heat_time + 10;  //experimental fit to correctly preallocate matrices
+
+  //  digitalWrite(heater, HIGH);  //turn on heater
+
+  Serial.println("heater on");
+
+  int i = 0;
+  unsigned long start_time = millis();
+  unsigned long time_now = start_time - sense_resolution;
+  unsigned long HES_times[preal_matrices];  //do i need to initialize these?
+  float HES_valm[preal_matrices];
+
+  while (millis() - start_time < heat_time) {
+    Serial.println("absolute timer"); Serial.println(millis());
+    Serial.println("flow timer"); Serial.println(millis() - start_time);
+
+    delay(50);
+
+    float HES_val = 0;  //hall effect sensor reading
+
+    HES_times[i] = millis() - start_time;
+
+
+    for (int j = 0; j < averaging_factor; j++) { //copying Alex
+//      HES_val += digitalRead(HES);
+      HES_val += 3.376;
+    };
+
+
+//    HES_val = HES_val / (float) averaging_factor; //may need to be double
+//    HES_valm[i] = HES_val;  //why am i writing it like this, how to declare matrix/array
+    HES_valm[i] = HES_val / (float) averaging_factor;
+    i++;
+
+     Serial.println("HES_val"); Serial.println(HES_val);
+
+    Serial.println("trigger timer"); Serial.println(millis() - time_now);
+    if ((millis() - time_now) >= sense_resolution) {  //perform 1 freq sweep each second
+
+      freqfunction();
+      time_now = millis();
+    }
+  }
+
+  digitalWrite(heater, LOW);  //turn off heater
+
+  Serial.println("number of i"); Serial.println(i);
+
+  //write to SD - copy from Alex
+  String writeit = "";
+  for (int j = 0; j < i; j++) {
+    writeit = String(HES_times[j]) + " " + String(HES_valm[j]);  //crashes if larger than ~41
+    writeSD(writeit);
+    j++;
+  }
+}
+
+
+void freqfunction() {
+
+  //cycle time 200ms
+
+  int cycle_status;
+  int cycle_bit;
+  byte real_read;
+  byte imag_read;
+  int freq_status;
+  int freq_bit;
+
+  float imp_mag;
+  float imp_phase;
+  
+  const float gain_factor = .00001;  //this could be calculated w/ auto calibration step
+
+  //activation protocol for AD5933
+
+  //enter standby mode
+  //  Wire.beginTransmission(AD5933ADDR);
+  //  Wire.write(CNTRLREGISTER); //control register MSBs
+  //  Wire.write(0xB0); //standby mode: 10110000 (bin)
+  //  Wire.endTransmission();
+  //  delayMicroseconds(dtime);
+
+  //assign start frequency registry
+
+  wirewriteloop(0x82, 0x18); //start freq: 50kHz = 1600116 (dec) = 0x186A74 (hex)
+
+  wirewriteloop(0x83, 0x6A);
+
+  wirewriteloop(0x84, 0x74);
+
+  //number of increments register
+  wirewriteloop(0x89, 0x00); //0 (dec)
+
+  //frequency increment register
+  wirewriteloop(0x85, 0x05);  //freq increments: 10 kHz = 335544 (dec) = 0x051EB8 (hex)
+
+  wirewriteloop(0x86, 0x1E);
+
+  wirewriteloop(0x87, 0xB8);
+
+  //assign settling time cycles (not sure that this should go here)
+  wirewriteloop(0x8A, 0x07);  //00000111(bin), x4 cycles
+
+  wirewriteloop(0x8B, 0xFF);
+
+  //control: enter standby mode (spec sheet says use a reset instead, test this if nec)
+  wirewriteloop(CNTRLREGISTER, 0xB0);  //standby mode: 1011 0000
+
+  //control: initialize with start frequency
+  wirewriteloop(CNTRLREGISTER, 0x10);  //init w start freq: 0001 0000
+
+  delay(100);  //settling time
+
+
+
+  //frequency scan
+
+  //control:
+  wirewriteloop(CNTRLREGISTER, 0x20);  //start freq sweep: 0010 0000
+
+
+
+  while (!freq_bit) {
+    //poll status register at cycle complete bit//////////////////////////////////////////////
+    //place pointer on status register
+    Wire.beginTransmission(AD5933ADDR);
+    Wire.write(byte(0x8F));  //place I2C pointer on status register
+    Wire.endTransmission();
+
+    //request status
+    Wire.requestFrom(AD5933ADDR, 1);  //request one byte (there should only be one byte at this register)
+
+    //receive status
+    if (Wire.available()) { //if one byte was received
+      cycle_status = Wire.read();  //receive byte
+      cycle_bit = bitRead(cycle_status, 1);  //read bit D1
+
+      int i = 0;  //measurement number index
+
+      //        Serial.println("cycle bit is");
+      //        Serial.println(cycle_bit);
+
+      if (cycle_bit) {  //if cycle is complete and data available
+
+
+        //real data acquisition
+
+        Wire.beginTransmission(AD5933ADDR);
+        Wire.write(byte(0x94));  //point to real data MSB
+        Wire.endTransmission();
+
+        Wire.requestFrom(AD5933ADDR, 1);
+
+        if (Wire.available()) {
+          real_read = Wire.read();
+          real_read = real_read << 8;
+        }
+
+        Wire.beginTransmission(AD5933ADDR);
+        Wire.write(byte(0x95));  //point to real data LSB
+        Wire.endTransmission();
+
+        Wire.requestFrom(AD5933ADDR, 1);
+
+        if (Wire.available()) {
+          real_read |= Wire.read();
+        }
+
+        Serial.println("real_read is"); Serial.println(real_read);
+
+        //imaginary data acquisition
+
+        Wire.beginTransmission(AD5933ADDR);
+        Wire.write(byte(0x96));  //point to imag data MSB
+        Wire.endTransmission();
+
+        Wire.requestFrom(AD5933ADDR, 1);
+
+        if (Wire.available()) {
+          imag_read = Wire.read();
+          imag_read = imag_read << 8;
+        }
+
+        Wire.beginTransmission(AD5933ADDR);
+        Wire.write(byte(0x97));  //point to imag data LSB
+        Wire.endTransmission();
+
+        Wire.requestFrom(AD5933ADDR, 1);
+
+        if (Wire.available()) {
+          imag_read |= Wire.read();
+        }
+
+        Serial.println("imag_read is"); Serial.println(imag_read);
+
+        //imp magnitude and phase calculation and storage
+
+        imp_mag = (real_read * real_read);
+        Serial.println("imp_mag"); Serial.println(imp_mag);
+        imp_mag = 1 / (gain_factor * imp_mag);
+
+        Serial.println("imp_mag"); Serial.println(imp_mag);
+
+        float real_read;
+        float imag_read;
+        if (imag_read >= 0)
+        {
+          if (real_read >= 0)  { //first quadrant
+            imp_phase = atan2(imag_read, real_read) * (180 / pi);
+          }
+          else
+          {
+            imp_phase = 180 + atan2(imag_read, real_read) * (180 / pi);
+          }
+        }
+        else
+        {
+          if (real_read <= 0)
+          {
+            imp_phase = 180 + atan2(imag_read, real_read) * (180 / pi);
+          }
+          else
+          {
+            imp_phase = 360 + atan2(imag_read, real_read) * (180 / pi);
+          }
+        }
+
+
+        Serial.println("impedance printed at");
+        Serial.println(millis());
+        String output = "";
+        output = String(measurement_index) + " " + String(imp_mag) + " " + String(imp_phase);
+        //output = String(measurement_index) + " " + String(imp_mag)+ " " + String("what's wrong");
+        writeSD(output);
+        Serial.println(output);
+        i++;
+        freq_bit = 1;
+        measurement_index++;
+
+        //increment frequency command
+        //        wirewriteloop(CNTRLREGISTER, 0x30);  //increment frequency: 00110000(bin)
+
+      }
+    }
+
+
+    //poll status register at frequency sweep bit
+    //    Wire.beginTransmission(AD5933ADDR);
+    //    Wire.write(byte(0x8F));  //point at status register
+    //    Wire.endTransmission();
+    //
+    //    Wire.requestFrom(AD5933ADDR, 1);
+    //
+    //    if (Wire.available()) {
+    //      freq_status = Wire.read();
+    //      freq_bit = bitRead(freq_status, 2);  //read bit D2
+    //      Serial.println("freq bit acquired");
+    //    }
+  }
+
+  wirewriteloop(CNTRLREGISTER, 0xA0);  //power-down mode: 1010 0000
+
+}
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+
+
+
+
+
