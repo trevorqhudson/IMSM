@@ -1,4 +1,5 @@
 // 5/22
+// 5/23 change PGA gain to x1, range = 2 in freqsweep function
 
 #include <Wire.h>
 #include <SD.h>
@@ -118,8 +119,6 @@ void main1() {
   digitalWrite(D1, LOW);
 
   //flow();
-  
-  //that's some hella dank flow
 
   //pressure
 
@@ -143,7 +142,7 @@ void main1() {
 void flow() {
 
   const int averaging_factor = 10.0; //cycles over which to sample hall effect sensor
-  const int heat_time = 2000;  //time heater is on in msecs
+  const int heat_time = 5000;  //time heater is on in msecs
   const int sense_resolution = 1000; // msecs between ad5933 calls
   const int preal_matrices = 0.0173 * heat_time + 10;  //experimental fit to correctly preallocate matrices
 
@@ -212,7 +211,7 @@ void freqfunction() {
   byte real_read;
   byte imag_read;
   int freq_status;
-  int freq_bit;
+  int freq_bit=0;
 
   float imp_mag;
   float imp_phase;
@@ -253,9 +252,11 @@ void freqfunction() {
 
   //control: enter standby mode (spec sheet says use a reset instead, test this if nec)
   wirewriteloop(CNTRLREGISTER, 0xB0);  //standby mode: 1011 0000
+  //wirewriteloop(CNTRLREGISTER, 0xB7);  //standby mode: 1011 0111
 
   //control: initialize with start frequency
   wirewriteloop(CNTRLREGISTER, 0x10);  //init w start freq: 0001 0000
+  //wirewriteloop(CNTRLREGISTER, 0x17);  //init w start freq: 0001 0111
 
   delay(100);  //settling time
 
@@ -264,7 +265,7 @@ void freqfunction() {
   //frequency scan
 
   //control:
-  wirewriteloop(CNTRLREGISTER, 0x20);  //start freq sweep: 0010 0000
+  wirewriteloop(CNTRLREGISTER, 0x27);  //start freq sweep: 0010 0111
 
 
 
@@ -386,7 +387,7 @@ void freqfunction() {
         measurement_index++;
 
         //increment frequency command
-        //        wirewriteloop(CNTRLREGISTER, 0x30);  //increment frequency: 00110000(bin)
+        //        wirewriteloop(CNTRLREGISTER, 0x37);  //increment frequency: 00110111(bin)
 
       }
     }
@@ -406,7 +407,7 @@ void freqfunction() {
     //    }
   }
 
-  wirewriteloop(CNTRLREGISTER, 0xA0);  //power-down mode: 1010 0000
+  wirewriteloop(CNTRLREGISTER, 0xA7);  //power-down mode: 1010 0111
 
 }
 
