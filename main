@@ -8,6 +8,9 @@
 #include <TimeLib.h>
 
 //global vars
+
+boolean sweep = false;
+
 const int dtime = 10;  //delay between I2C operations, in usecs
 const int CS = 4;  //pin select for CS
 const float pi = 3.14159265;
@@ -118,7 +121,7 @@ void main1() {
   digitalWrite(D1, LOW);
 
   //flow();
-  
+
   //that's some hella dank flow
 
   //pressure
@@ -143,7 +146,8 @@ void main1() {
 void flow() {
 
   const int averaging_factor = 10.0; //cycles over which to sample hall effect sensor
-  const int heat_time = 2000;  //time heater is on in msecs
+  const int heat_time = 10000;  //time heater is on in msecs
+  //Serial.println("heat time"); Serial.println(heat_time);
   const int sense_resolution = 1000; // msecs between ad5933 calls
   const int preal_matrices = 0.0173 * heat_time + 10;  //experimental fit to correctly preallocate matrices
 
@@ -158,8 +162,8 @@ void flow() {
   float HES_valm[preal_matrices];
 
   while (millis() - start_time < heat_time) {
-    Serial.println("absolute timer"); Serial.println(millis());
-    Serial.println("flow timer"); Serial.println(millis() - start_time);
+    //Serial.println("absolute timer"); Serial.println(millis());
+    //Serial.println("flow timer"); Serial.println(millis() - start_time);
 
     delay(50);
 
@@ -169,29 +173,30 @@ void flow() {
 
 
     for (int j = 0; j < averaging_factor; j++) { //copying Alex
-//      HES_val += digitalRead(HES);
+      //      HES_val += digitalRead(HES);
       HES_val += 3.376;
     };
 
 
-//    HES_val = HES_val / (float) averaging_factor; //may need to be double
-//    HES_valm[i] = HES_val;  //why am i writing it like this, how to declare matrix/array
+    //    HES_val = HES_val / (float) averaging_factor; //may need to be double
+    //    HES_valm[i] = HES_val;  //why am i writing it like this, how to declare matrix/array
     HES_valm[i] = HES_val / (float) averaging_factor;
     i++;
 
-     Serial.println("HES_val"); Serial.println(HES_val);
+    //Serial.println("HES_val"); Serial.println(HES_val);
 
-    Serial.println("trigger timer"); Serial.println(millis() - time_now);
+    //Serial.println("trigger timer"); Serial.println(millis() - time_now);
     if ((millis() - time_now) >= sense_resolution) {  //perform 1 freq sweep each second
 
       freqfunction();
+      //Serial.println("frequency function just ran");
       time_now = millis();
     }
   }
 
   digitalWrite(heater, LOW);  //turn off heater
 
-  Serial.println("number of i"); Serial.println(i);
+  //Serial.println("number of i"); Serial.println(i);
 
   //write to SD - copy from Alex
   String writeit = "";
@@ -205,20 +210,22 @@ void flow() {
 
 void freqfunction() {
 
+  Serial.println("sweep on?"); Serial.println(sweep);
+
   //cycle time 200ms
 
   int cycle_status;
-  int cycle_bit;
-  byte real_read;
-  byte imag_read;
+  int cycle_bit = 0;
+  int16_t real_read;
+  int16_t imag_read;
   int freq_status;
-  int freq_bit;
+  int freq_bit = 0;
 
   float imp_mag;
   float imp_phase;
-  
-  const float gain_factor = .00001;  //this could be calculated w/ auto calibration step
 
+  const float gain_factor = 3.5325E-8;  //this could be calculated w/ auto calibration step
+  //const float gain_factor = .00001;
   //activation protocol for AD5933
 
   //enter standby mode
@@ -228,34 +235,37 @@ void freqfunction() {
   //  Wire.endTransmission();
   //  delayMicroseconds(dtime);
 
+  //reset
+  wirewriteloop(0x81, 0x10);
+
   //assign start frequency registry
-
   wirewriteloop(0x82, 0x18); //start freq: 50kHz = 1600116 (dec) = 0x186A74 (hex)
-
   wirewriteloop(0x83, 0x6A);
-
   wirewriteloop(0x84, 0x74);
 
   //number of increments register
-  wirewriteloop(0x89, 0x00); //0 (dec)
+  wirewriteloop(0x89, 0x01); //1 (dec)
 
-  //frequency increment register
+  //delta f
   wirewriteloop(0x85, 0x05);  //freq increments: 10 kHz = 335544 (dec) = 0x051EB8 (hex)
-
   wirewriteloop(0x86, 0x1E);
-
   wirewriteloop(0x87, 0xB8);
 
-  //assign settling time cycles (not sure that this should go here)
-  wirewriteloop(0x8A, 0x07);  //00000111(bin), x4 cycles
+  //number of increments
+  wirewriteloop(0x88, 0x00);
+  wirewriteloop(0x89, 0x05);
 
-  wirewriteloop(0x8B, 0xFF);
+  //assign settling time cycles (not sure that this should go here)
+  wirewriteloop(0x8A, 0x01);  //00000111(bin), x4 cycles
+  wirewriteloop(0x8B, 0xF4);
+
+  //Serial.println("almost done initializing");
 
   //control: enter standby mode (spec sheet says use a reset instead, test this if nec)
   wirewriteloop(CNTRLREGISTER, 0xB0);  //standby mode: 1011 0000
 
   //control: initialize with start frequency
-  wirewriteloop(CNTRLREGISTER, 0x10);  //init w start freq: 0001 0000
+  wirewriteloop(CNTRLREGISTER, 0x11);  //init w start freq: 0001 0001 (1x PGA gain)
 
   delay(100);  //settling time
 
@@ -265,8 +275,6 @@ void freqfunction() {
 
   //control:
   wirewriteloop(CNTRLREGISTER, 0x20);  //start freq sweep: 0010 0000
-
-
 
   while (!freq_bit) {
     //poll status register at cycle complete bit//////////////////////////////////////////////
@@ -285,8 +293,7 @@ void freqfunction() {
 
       int i = 0;  //measurement number index
 
-      //        Serial.println("cycle bit is");
-      //        Serial.println(cycle_bit);
+      //Serial.println("cycle bit is"); Serial.println(cycle_bit);
 
       if (cycle_bit) {  //if cycle is complete and data available
 
@@ -343,10 +350,9 @@ void freqfunction() {
 
         //imp magnitude and phase calculation and storage
 
-        imp_mag = (real_read * real_read);
+        imp_mag = sqrt(real_read * real_read + imag_read * imag_read);
         Serial.println("imp_mag"); Serial.println(imp_mag);
-        imp_mag = 1 / (gain_factor * imp_mag);
-
+        imp_mag = 1 / (gain_factor * (float) imp_mag);
         Serial.println("imp_mag"); Serial.println(imp_mag);
 
         float real_read;
@@ -374,36 +380,37 @@ void freqfunction() {
         }
 
 
-        Serial.println("impedance printed at");
-        Serial.println(millis());
+        //Serial.println("impedance printed at"); Serial.println(millis());
         String output = "";
         output = String(measurement_index) + " " + String(imp_mag) + " " + String(imp_phase);
         //output = String(measurement_index) + " " + String(imp_mag)+ " " + String("what's wrong");
         writeSD(output);
-        Serial.println(output);
+        //Serial.println(output);
         i++;
-        freq_bit = 1;
         measurement_index++;
 
-        //increment frequency command
-        //        wirewriteloop(CNTRLREGISTER, 0x30);  //increment frequency: 00110000(bin)
+        if (sweep == 0) {
+          freq_bit = 1;
+        } else {
+          //increment frequency command
+          wirewriteloop(CNTRLREGISTER, 0x30);  //increment frequency: 00110000(bin)
 
+          //poll status register at frequency sweep bit
+          Wire.beginTransmission(AD5933ADDR);
+          Wire.write(byte(0x8F));  //point at status register
+          Wire.endTransmission();
+
+          Wire.requestFrom(AD5933ADDR, 1);
+
+          if (Wire.available()) {
+            freq_status = Wire.read();
+            freq_bit = bitRead(freq_status, 2);  //read bit D2
+            Serial.println("freq bit acquired"); Serial.println(freq_bit);
+          }
+
+        }
       }
     }
-
-
-    //poll status register at frequency sweep bit
-    //    Wire.beginTransmission(AD5933ADDR);
-    //    Wire.write(byte(0x8F));  //point at status register
-    //    Wire.endTransmission();
-    //
-    //    Wire.requestFrom(AD5933ADDR, 1);
-    //
-    //    if (Wire.available()) {
-    //      freq_status = Wire.read();
-    //      freq_bit = bitRead(freq_status, 2);  //read bit D2
-    //      Serial.println("freq bit acquired");
-    //    }
   }
 
   wirewriteloop(CNTRLREGISTER, 0xA0);  //power-down mode: 1010 0000
@@ -412,7 +419,6 @@ void freqfunction() {
 
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 
 
 
