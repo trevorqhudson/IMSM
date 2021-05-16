@@ -1,4 +1,4 @@
-//partly copied from Sensirino docs
+//partly copied from Sensirion docs
 
 void LD20_flow() {
   // To perform a measurement, first send 0x3608 to switch to continuous
