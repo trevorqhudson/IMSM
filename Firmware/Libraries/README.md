@@ -1,6 +1,6 @@
 # Snooze v6.3.9
 
-Cloned from https://github.com/duff2013/Snooze
+Cloned from https://github.com/duff2013/Snooze 5/2021
 
 ---
 Low power library for the Teensy LC/3.2/3.5/3.6/4.0 class microcontrollers.
