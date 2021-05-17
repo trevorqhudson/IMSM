@@ -9,7 +9,7 @@ Features:
 * Sensirion LD20 flow sensor (I2C)
 * EIS/CV sweeps addressable to any of 4 measurement electrode pairs + electrolysis electrodes
 * Extends frequency range of AD5933 both low and high w/ external clock (code incomplete, but tapeout done)
-* Completely autonomous data collection - designed for clinician use, not for engineers
+* Completely autonomous data collection - designed for clinician use, not for researchers only
 * Low-power + sleep mode extends battery life
 
 [Meng Lab research page](https://biomems.usc.edu/ "easter egg text")
