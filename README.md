@@ -1,7 +1,7 @@
 # IMSM
 integrated multi-sensor module (IMSM) for transducing flow dynamics in hydrocephalic shunts
 
-This repo contains firmware + schematics for a portable datalogger designed for an prototype polymer sensor device in the spirit of open science and reproducible research.
+This repo contains firmware + schematics for a portable datalogger designed for an prototype polymer sensor device.
 
 Features:
 * IMSM thermal flow sensor, bubble pressure sensor, and substrate/electrode integrity sensors using AD5933 LCR IC
